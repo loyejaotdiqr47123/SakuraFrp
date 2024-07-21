@@ -17,7 +17,8 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+    "io"
+	"os"
 	"net/http"
 	"sort"
 	"strings"
@@ -79,7 +80,6 @@ func (svr *Service) apiReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Info("success reload conf")
-	return
 }
 
 type StatusResp struct {
@@ -203,7 +203,6 @@ func (svr *Service) apiStatus(w http.ResponseWriter, r *http.Request) {
 	sort.Sort(ByProxyStatusResp(res.Https))
 	sort.Sort(ByProxyStatusResp(res.Stcp))
 	sort.Sort(ByProxyStatusResp(res.Xtcp))
-	return
 }
 
 // GET api/config
@@ -260,7 +259,7 @@ func (svr *Service) apiPutConfig(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// get new config content
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		res.Code = 400
 		res.Msg = fmt.Sprintf("read request body error: %v", err)
@@ -277,7 +276,7 @@ func (svr *Service) apiPutConfig(w http.ResponseWriter, r *http.Request) {
 
 	// get token from origin content
 	token := ""
-	b, err := ioutil.ReadFile(g.GlbClientCfg.CfgFile)
+	b, err := os.ReadFile(g.GlbClientCfg.CfgFile)
 	if err != nil {
 		res.Code = 400
 		res.Msg = err.Error()
@@ -316,7 +315,7 @@ func (svr *Service) apiPutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	content = strings.Join(newRows, "\n")
 
-	err = ioutil.WriteFile(g.GlbClientCfg.CfgFile, []byte(content), 0644)
+	err = os.WriteFile(g.GlbClientCfg.CfgFile, []byte(content), 0644)
 	if err != nil {
 		res.Code = 500
 		res.Msg = fmt.Sprintf("write content to frpc config file error: %v", err)
