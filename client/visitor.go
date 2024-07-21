@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	`io/ioutil`
+	"io/ioutil"
 	"net"
 	"sync"
 	"time"
