@@ -252,6 +252,10 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 	raddr, _ := net.ResolveUDPAddr("udp",
 		fmt.Sprintf("%s:%d", g.GlbClientCfg.ServerAddr, g.GlbClientCfg.ServerUdpPort))
 	clientConn, err := net.DialUDP("udp", nil, raddr)
+	if err != nil {
+		pxy.Error("dial UDP error: %v", err)
+		return
+	}
 	defer clientConn.Close()
 
 	err = msg.WriteMsg(clientConn, natHoleClientMsg)
@@ -289,6 +293,7 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 	array := strings.Split(natHoleRespMsg.VisitorAddr, ":")
 	if len(array) <= 1 {
 		pxy.Error("get NatHoleResp visitor address error: %v", natHoleRespMsg.VisitorAddr)
+		return
 	}
 	laddr, _ := net.ResolveUDPAddr("udp", clientConn.LocalAddr().String())
 	/*
@@ -301,15 +306,26 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 		pxy.Error("get natHoleResp visitor address error: %v", natHoleRespMsg.VisitorAddr)
 		return
 	}
-	pxy.sendDetectMsg(array[0], int(port), laddr, []byte(natHoleRespMsg.Sid))
+
+	err = pxy.sendDetectMsg(array[0], int(port), laddr, []byte(natHoleRespMsg.Sid))
+	if err != nil {
+		pxy.Error("send detect message error: %v", err)
+		return
+	}
 	pxy.Trace("send all detect msg done")
 
-	msg.WriteMsg(conn, &msg.NatHoleClientDetectOK{})
+
+	err = msg.WriteMsg(conn, &msg.NatHoleClientDetectOK{})
+	if err != nil {
+		pxy.Error("write NatHoleClientDetectOK message error: %v", err)
+		return
+	}
 
 	// Listen for clientConn's address and wait for visitor connection
 	lConn, err := net.ListenUDP("udp", laddr)
 	if err != nil {
-		pxy.Error("listen on visitorConn's local adress error: %v", err)
+
+		pxy.Error("listen on visitorConn's local address error: %v", err)
 		return
 	}
 	defer lConn.Close()
@@ -330,7 +346,12 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 	pool.PutBuf(sidBuf)
 	pxy.Info("nat hole connection make success, sid [%s]", natHoleRespMsg.Sid)
 
-	lConn.WriteToUDP(sidBuf[:n], uAddr)
+
+	_, err = lConn.WriteToUDP(sidBuf[:n], uAddr)
+	if err != nil {
+		pxy.Error("write to UDP error: %v", err)
+		return
+	}
 
 	kcpConn, err := frpNet.NewKcpConnFromUdp(lConn, false, natHoleRespMsg.VisitorAddr)
 	if err != nil {
