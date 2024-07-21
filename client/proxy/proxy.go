@@ -306,14 +306,12 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 		pxy.Error("get natHoleResp visitor address error: %v", natHoleRespMsg.VisitorAddr)
 		return
 	}
-
 	err = pxy.sendDetectMsg(array[0], int(port), laddr, []byte(natHoleRespMsg.Sid))
 	if err != nil {
 		pxy.Error("send detect message error: %v", err)
 		return
 	}
 	pxy.Trace("send all detect msg done")
-
 
 	err = msg.WriteMsg(conn, &msg.NatHoleClientDetectOK{})
 	if err != nil {
@@ -324,7 +322,6 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 	// Listen for clientConn's address and wait for visitor connection
 	lConn, err := net.ListenUDP("udp", laddr)
 	if err != nil {
-
 		pxy.Error("listen on visitorConn's local address error: %v", err)
 		return
 	}
@@ -345,7 +342,6 @@ func (pxy *XtcpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 	}
 	pool.PutBuf(sidBuf)
 	pxy.Info("nat hole connection make success, sid [%s]", natHoleRespMsg.Sid)
-
 
 	_, err = lConn.WriteToUDP(sidBuf[:n], uAddr)
 	if err != nil {
