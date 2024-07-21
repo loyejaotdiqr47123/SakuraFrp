@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
+	`io/ioutil`
 	"net"
 	"sync"
 	"time"
@@ -87,14 +87,23 @@ func (sv *StcpVisitor) Run() (err error) {
 }
 
 func (sv *StcpVisitor) Close() {
-	sv.l.Close()
+
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	if !sv.closed {
+		sv.closed = true
+		if sv.l != nil {
+			sv.l.Close()
+		}
+	}
 }
 
 func (sv *StcpVisitor) worker() {
 	for {
 		conn, err := sv.l.Accept()
 		if err != nil {
-			sv.Warn("stcp local listener closed")
+
+			sv.Warn("stcp local listener closed: %v", err)
 			return
 		}
 
@@ -108,6 +117,7 @@ func (sv *StcpVisitor) handleConn(userConn frpNet.Conn) {
 	sv.Debug("get a new stcp user connection")
 	visitorConn, err := sv.ctl.connectServer()
 	if err != nil {
+		sv.Warn("connect to server error: %v", err)
 		return
 	}
 	defer visitorConn.Close()
@@ -174,14 +184,23 @@ func (sv *XtcpVisitor) Run() (err error) {
 }
 
 func (sv *XtcpVisitor) Close() {
-	sv.l.Close()
+
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	if !sv.closed {
+		sv.closed = true
+		if sv.l != nil {
+			sv.l.Close()
+		}
+	}
 }
 
 func (sv *XtcpVisitor) worker() {
 	for {
 		conn, err := sv.l.Accept()
 		if err != nil {
-			sv.Warn("xtcp local listener closed")
+
+			sv.Warn("xtcp local listener closed: %v", err)
 			return
 		}
 
@@ -201,7 +220,8 @@ func (sv *XtcpVisitor) handleConn(userConn frpNet.Conn) {
 	raddr, err := net.ResolveUDPAddr("udp",
 		fmt.Sprintf("%s:%d", g.GlbClientCfg.ServerAddr, g.GlbClientCfg.ServerUdpPort))
 	if err != nil {
-		sv.Error("resolve server UDP addr error")
+
+		sv.Error("resolve server UDP addr error: %v", err)
 		return
 	}
 
@@ -231,12 +251,14 @@ func (sv *XtcpVisitor) handleConn(userConn frpNet.Conn) {
 	n, err := visitorConn.Read(buf)
 	if err != nil {
 		sv.Warn("get natHoleRespMsg error: %v", err)
+		pool.PutBuf(buf)
 		return
 	}
 
 	err = msg.ReadMsgInto(bytes.NewReader(buf[:n]), &natHoleRespMsg)
 	if err != nil {
 		sv.Warn("get natHoleRespMsg error: %v", err)
+		pool.PutBuf(buf)
 		return
 	}
 	visitorConn.SetReadDeadline(time.Time{})
@@ -274,11 +296,13 @@ func (sv *XtcpVisitor) handleConn(userConn frpNet.Conn) {
 	n, err = lConn.Read(sidBuf)
 	if err != nil {
 		sv.Warn("get sid from client error: %v", err)
+		pool.PutBuf(sidBuf)
 		return
 	}
 	lConn.SetReadDeadline(time.Time{})
 	if string(sidBuf[:n]) != natHoleRespMsg.Sid {
 		sv.Warn("incorrect sid from client")
+		pool.PutBuf(sidBuf)
 		return
 	}
 	pool.PutBuf(sidBuf)
