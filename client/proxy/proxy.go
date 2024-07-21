@@ -32,8 +32,7 @@ import (
 	"github.com/fatedier/frp/utils/log"
 	frpNet "github.com/fatedier/frp/utils/net"
 
-	"github.com/fatedier/golib/errors"
-	frpIo "github.com/fatedier/golib/io"
+	"github.com/fatedier/golib/io"
 	"github.com/fatedier/golib/pool"
 	fmux "github.com/hashicorp/yamux"
 	pp "github.com/pires/go-proxyproto"
@@ -431,72 +430,86 @@ func (pxy *UdpProxy) Close() {
 		}
 	}
 }
+	func (pxy *UdpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
+		pxy.Info("incoming a new work connection for udp proxy, %s", conn.RemoteAddr().String())
+		// close resources related with old workConn
+		pxy.Close()
 
-func (pxy *UdpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
-	pxy.Info("incoming a new work connection for udp proxy, %s", conn.RemoteAddr().String())
-	// close resources releated with old workConn
-	pxy.Close()
+		pxy.mu.Lock()
+		pxy.workConn = conn
+		pxy.readCh = make(chan *msg.UdpPacket, 1024)
+		pxy.sendCh = make(chan msg.Message, 1024)
+		pxy.closed = false
+		pxy.mu.Unlock()
 
-	pxy.mu.Lock()
-	pxy.workConn = conn
-	pxy.readCh = make(chan *msg.UdpPacket, 1024)
-	pxy.sendCh = make(chan msg.Message, 1024)
-	pxy.closed = false
-	pxy.mu.Unlock()
-
-	workConnReaderFn := func(conn net.Conn, readCh chan *msg.UdpPacket) {
-		for {
-			var udpMsg msg.UdpPacket
-			if errRet := msg.ReadMsgInto(conn, &udpMsg); errRet != nil {
-				pxy.Warn("read from workConn for udp error: %v", errRet)
-				return
-			}
-			if errRet := errors.PanicToError(func() {
-				pxy.Trace("get udp package from workConn: %s", udpMsg.Content)
-				readCh <- &udpMsg
-			}); errRet != nil {
-				pxy.Info("reader goroutine for udp work connection closed: %v", errRet)
-				return
-			}
-		}
-	}
-	workConnSenderFn := func(conn net.Conn, sendCh chan msg.Message) {
-		defer func() {
-			pxy.Info("writer goroutine for udp work connection closed")
-		}()
-		var errRet error
-		for rawMsg := range sendCh {
-			switch m := rawMsg.(type) {
-			case *msg.UdpPacket:
-				pxy.Trace("send udp package to workConn: %s", m.Content)
-			case *msg.Ping:
-				pxy.Trace("send ping message to udp workConn")
-			}
-			if errRet = msg.WriteMsg(conn, rawMsg); errRet != nil {
-				pxy.Error("udp work write error: %v", errRet)
-				return
+		workConnReaderFn := func(conn net.Conn, readCh chan *msg.UdpPacket) {
+			defer func() {
+				pxy.Info("reader goroutine for udp work connection closed")
+				pxy.Close()
+			}()
+			for {
+				var udpMsg msg.UdpPacket
+				if errRet := msg.ReadMsgInto(conn, &udpMsg); errRet != nil {
+					pxy.Warn("read from workConn for udp error: %v", errRet)
+					return
+				}
+				select {
+				case readCh <- &udpMsg:
+					pxy.Trace("get udp package from workConn: %s", udpMsg.Content)
+				default:
+					pxy.Warn("readCh is full, discarding udp package")
+				}
 			}
 		}
-	}
-	heartbeatFn := func(sendCh chan msg.Message) {
-		var errRet error
-		for {
-			time.Sleep(time.Duration(30) * time.Second)
-			if errRet = errors.PanicToError(func() {
-				sendCh <- &msg.Ping{}
-			}); errRet != nil {
-				pxy.Trace("heartbeat goroutine for udp work connection closed")
-				break
+
+		workConnSenderFn := func(conn net.Conn, sendCh chan msg.Message) {
+			defer func() {
+				pxy.Info("writer goroutine for udp work connection closed")
+				pxy.Close()
+			}()
+			for {
+				select {
+				case rawMsg, ok := <-sendCh:
+					if !ok {
+						return
+					}
+					switch m := rawMsg.(type) {
+					case *msg.UdpPacket:
+						pxy.Trace("send udp package to workConn: %s", m.Content)
+					case *msg.Ping:
+						pxy.Trace("send ping message to udp workConn")
+					}
+					if errRet := msg.WriteMsg(conn, rawMsg); errRet != nil {
+						pxy.Error("udp work write error: %v", errRet)
+						return
+					}
+				case <-pxy.closedCh:
+					return
+				}
 			}
 		}
+
+		heartbeatFn := func(sendCh chan msg.Message) {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					select {
+					case sendCh <- &msg.Ping{}:
+						pxy.Trace("sent heartbeat to udp work connection")
+					default:
+						pxy.Trace("failed to send heartbeat to udp work connection")
+					}
+				}
+			}
+		}
+
+		go workConnSenderFn(pxy.workConn, pxy.sendCh)
+		go workConnReaderFn(pxy.workConn, pxy.readCh)
+		go heartbeatFn(pxy.sendCh)
+		udp.Forwarder(pxy.localAddr, pxy.readCh, pxy.sendCh)
 	}
-
-	go workConnSenderFn(pxy.workConn, pxy.sendCh)
-	go workConnReaderFn(pxy.workConn, pxy.readCh)
-	go heartbeatFn(pxy.sendCh)
-	udp.Forwarder(pxy.localAddr, pxy.readCh, pxy.sendCh)
-}
-
 // Common handler for tcp work connections.
 func HandleTcpWorkConnection(localInfo *config.LocalSvrConf, proxyPlugin plugin.Plugin,
 	baseInfo *config.BaseProxyConf, workConn frpNet.Conn, encKey []byte, m *msg.StartWorkConn) {
@@ -506,19 +519,17 @@ func HandleTcpWorkConnection(localInfo *config.LocalSvrConf, proxyPlugin plugin.
 		err    error
 	)
 	remote = workConn
-
-	if baseInfo.UseEncryption {
-		remote, err = frpIo.WithEncryption(remote, encKey)
-		if err != nil {
-			workConn.Close()
-			workConn.Error("create encryption stream error: %v", err)
-			return
+		if baseInfo.UseEncryption {
+			remote, err = frpIo.WithEncryption(remote, []byte(encKey))
+			if err != nil {
+				workConn.Close()
+				workConn.Error("create encryption stream error: %v", err)
+				return
+			}
 		}
-	}
-	if baseInfo.UseCompression {
-		remote = frpIo.WithCompression(remote)
-	}
-
+		if baseInfo.UseCompression {
+			remote = frpIo.WithCompression(remote)
+		}
 	// check if we need to send proxy protocol info
 	var extraInfo []byte
 	if baseInfo.ProxyProtocolVersion != "" {
@@ -573,7 +584,7 @@ func HandleTcpWorkConnection(localInfo *config.LocalSvrConf, proxyPlugin plugin.
 			localConn.Write(extraInfo)
 		}
 
-		frpIo.Join(localConn, remote)
+		io.Join(localConn, remote)
 		workConn.Debug("join connections closed")
 	}
 }
