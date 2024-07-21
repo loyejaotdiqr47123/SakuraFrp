@@ -479,7 +479,7 @@ func (pxy *UdpProxy) InWorkConn(conn frpNet.Conn, m *msg.StartWorkConn) {
 			}
 		}
 	}
-	heartbeatFn := func(conn net.Conn, sendCh chan msg.Message) {
+	heartbeatFn := func(sendCh chan msg.Message) {
 		var errRet error
 		for {
 			time.Sleep(time.Duration(30) * time.Second)
