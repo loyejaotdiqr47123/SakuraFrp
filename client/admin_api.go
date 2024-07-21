@@ -17,7 +17,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-    "io"
+	"io"
 	"os"
 	"net/http"
 	"sort"
@@ -304,11 +304,16 @@ func (svr *Service) apiPutConfig(w http.ResponseWriter, r *http.Request) {
 
 	newRows := make([]string, 0)
 	if token != "" {
+		commonSectionFound := false
 		for _, row := range tmpRows {
 			newRows = append(newRows, row)
 			if strings.HasPrefix(row, "[common]") {
+				commonSectionFound = true
 				newRows = append(newRows, token)
 			}
+		}
+		if !commonSectionFound {
+			newRows = append([]string{"[common]", token}, newRows...)
 		}
 	} else {
 		newRows = tmpRows
