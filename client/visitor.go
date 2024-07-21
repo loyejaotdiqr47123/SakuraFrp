@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"sync"
 	"time"
@@ -87,7 +86,6 @@ func (sv *StcpVisitor) Run() (err error) {
 }
 
 func (sv *StcpVisitor) Close() {
-
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	if !sv.closed {
@@ -102,7 +100,6 @@ func (sv *StcpVisitor) worker() {
 	for {
 		conn, err := sv.l.Accept()
 		if err != nil {
-
 			sv.Warn("stcp local listener closed: %v", err)
 			return
 		}
@@ -184,7 +181,6 @@ func (sv *XtcpVisitor) Run() (err error) {
 }
 
 func (sv *XtcpVisitor) Close() {
-
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	if !sv.closed {
@@ -199,7 +195,6 @@ func (sv *XtcpVisitor) worker() {
 	for {
 		conn, err := sv.l.Accept()
 		if err != nil {
-
 			sv.Warn("xtcp local listener closed: %v", err)
 			return
 		}
@@ -331,7 +326,8 @@ func (sv *XtcpVisitor) handleConn(userConn frpNet.Conn) {
 
 	fmuxCfg := fmux.DefaultConfig()
 	fmuxCfg.KeepAliveInterval = 5 * time.Second
-	fmuxCfg.LogOutput = ioutil.Discard
+
+	fmuxCfg.LogOutput = io.Discard
 	sess, err := fmux.Client(remote, fmuxCfg)
 	if err != nil {
 		sv.Error("create yamux session error: %v", err)
